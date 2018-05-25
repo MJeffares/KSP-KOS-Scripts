@@ -1,0 +1,105 @@
+// launch.ks v1.0.0
+// Mansel Jeffares
+// KOS launch script
+
+declare local function printHUD
+{
+	PARAMETER message.
+	HUDTEXT("KOS: " + message, 5, 2, 25, WHITE, true).
+}
+
+CLEARSCREEN.
+
+printHUD("LAUNCH").
+
+SET MYSTEER TO HEADING(90,90).
+LOCK STEERING TO MYSTEER.
+LOCK THROTTLE TO 1.0.
+STAGE.
+
+WHEN SHIP:AVAILABLETHRUST < (prevThrust -10) THEN
+{
+	LOCK THROTTLE TO 0.1.
+	WAIT 0.2.
+	STAGE.
+	WAIT 0.5.
+	LOCK THROTTLE TO 1.
+	SET prevThrust to SHIP:AVAILABLETHRUST.
+	PRESERVE.
+}
+
+UNTIL FALSE
+{
+	SET prevThrust TO SHIP:AVAILABLETHRUST.
+	SET speed TO SHIP:VELOCITY:SURFACE:MAG.
+	
+	IF speed  < 30
+	{
+		
+	}
+	ELSE IF speed > 1275
+	{
+		SET MYSTEER TO HEADING(90,5)
+	}
+	ELSE
+	{
+		SET MYSTEER TO HEADING(90, 90 - (speed)/15).
+	}
+	
+	IF APOAPSIS > 125000
+	{
+		SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0. 
+		printHUD("FINISHED").
+		SHUTDOWN.
+	}
+	
+	IF SHIP:LIQUIDFUEL < 0.10
+	{
+		SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0. 
+		printHUD("OUTTA FUEL").
+		SHUTDOWN.
+	}
+	
+	WAIT 0.1.
+}
+
+//old
+
+
+//FUNCTION TILT {
+  //PARAMETER minimum_altitude.
+  //PARAMETER angle.
+
+  //WAIT UNTIL ALTITUDE > minimum_altitude.
+  //NOTIFY("Locking heading to " + angle + " degrees").
+  //LOCK STEERING TO HEADING(0, angle).
+//}
+
+
+
+//NOTIFY("Launch program initiated").
+//TILT(0, 80). LOCK THROTTLE TO 1.
+
+//WAIT 5. NOTIFY("Launching!"). STAGE.
+
+//WAIT UNTIL VERTICALSPEED > 300. LOCK THROTTLE TO 0.35.
+
+//TILT(10000, 70).
+//TILT(20000, 55).
+//TILT(30000, 40).
+
+//WAIT UNTIL APOAPSIS > 70000.
+//TILT(0, 10). LOCK THROTTLE TO 0.1.
+
+//WAIT UNTIL STAGE:LIQUIDFUEL < 180.
+//NOTIFY("Ditching launch stage").
+//LOCK THROTTLE TO 0. WAIT 5. STAGE.
+
+//WAIT UNTIL ETA:APOAPSIS < 20.
+//TILT(0, 0). WAIT 5. LOCK THROTTLE TO 1.
+
+//WAIT UNTIL PERIAPSIS > 70000.
+//LOCK THROTTLE TO 0. NOTIFY("Orbit achieved").
+
+//WAIT 5. NOTIFY("Shutting down").
+//SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0. SHUTDOWN.
