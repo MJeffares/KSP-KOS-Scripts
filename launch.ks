@@ -1,4 +1,4 @@
-// launch.ks v1.0.0
+// launch.ks v2.0.0
 // Mansel Jeffares
 // KOS launch script
 
@@ -12,6 +12,8 @@ CLEARSCREEN.
 
 printHUD("LAUNCH").
 
+SET launchState TO 0.
+SET launchComplete To FALSE.
 SET MYSTEER TO HEADING(90,90).
 LOCK STEERING TO MYSTEER.
 LOCK THROTTLE TO 1.0.
@@ -19,38 +21,71 @@ STAGE.
 
 WHEN SHIP:AVAILABLETHRUST < (prevThrust -10) THEN
 {
-	LOCK THROTTLE TO 0.1.
-	WAIT 0.2.
+	LOCK THROTTLE TO 0.3.
+	WAIT 0.3.
 	STAGE.
-	WAIT 0.5.
+	WAIT 1.
 	LOCK THROTTLE TO 1.
 	SET prevThrust to SHIP:AVAILABLETHRUST.
 	PRESERVE.
 }
 
-UNTIL FALSE
+UNTIL launchComplete
 {
 	SET prevThrust TO SHIP:AVAILABLETHRUST.
 	SET speed TO SHIP:VELOCITY:SURFACE:MAG.
 	
-	IF speed  < 30
+	IF launchState = 0
 	{
-		
-	}
-	ELSE IF speed > 1275
-	{
-		SET MYSTEER TO HEADING(90,5)
-	}
-	ELSE
-	{
-		SET MYSTEER TO HEADING(90, 90 - (speed)/15).
+		IF speed > 30
+		{
+			SET launchState TO 1.
+		}
 	}
 	
-	IF APOAPSIS > 125000
+	IF launchState = 1
+	{		
+		IF speed > 1275 
+		{
+			SET MYSTEER TO HEADING(90,5).
+		}
+		ELSE
+		{
+			SET MYSTEER TO HEADING(90, 90 - (speed)/15).
+		}
+		
+		IF APOAPSIS > 125000
+		{
+			LOCK THROTTLE TO 0.
+			SET launchState TO 2.
+			printHUD("Coasting to apoapsis").
+		}
+	}
+	
+	IF launchState = 2
 	{
-		SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0. 
-		printHUD("FINISHED").
-		SHUTDOWN.
+		LOCK MYSTEER TO SHIP:PROGRADE.
+		
+		IF ETA:APOAPSIS < 20
+		{
+			SET launchState TO 3.
+			printHUD("Circularizing").
+		}		
+	}
+	
+	IF launchState = 3
+	{
+		LOCK THROTTLE TO 1.
+		
+		IF PERIAPSIS > 125000
+		{
+			//launchState = 4.
+			LOCK THROTTLE TO 0.
+			printHUD("Finished").
+			SET launchComplete TO true. 
+			SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0. 
+			SHUTDOWN.
+		}
 	}
 	
 	IF SHIP:LIQUIDFUEL < 0.10
@@ -63,43 +98,6 @@ UNTIL FALSE
 	WAIT 0.1.
 }
 
-//old
-
-
-//FUNCTION TILT {
-  //PARAMETER minimum_altitude.
-  //PARAMETER angle.
-
-  //WAIT UNTIL ALTITUDE > minimum_altitude.
-  //NOTIFY("Locking heading to " + angle + " degrees").
-  //LOCK STEERING TO HEADING(0, angle).
-//}
-
-
-
-//NOTIFY("Launch program initiated").
-//TILT(0, 80). LOCK THROTTLE TO 1.
-
-//WAIT 5. NOTIFY("Launching!"). STAGE.
-
-//WAIT UNTIL VERTICALSPEED > 300. LOCK THROTTLE TO 0.35.
-
-//TILT(10000, 70).
-//TILT(20000, 55).
-//TILT(30000, 40).
-
-//WAIT UNTIL APOAPSIS > 70000.
-//TILT(0, 10). LOCK THROTTLE TO 0.1.
-
-//WAIT UNTIL STAGE:LIQUIDFUEL < 180.
-//NOTIFY("Ditching launch stage").
-//LOCK THROTTLE TO 0. WAIT 5. STAGE.
-
-//WAIT UNTIL ETA:APOAPSIS < 20.
-//TILT(0, 0). WAIT 5. LOCK THROTTLE TO 1.
-
-//WAIT UNTIL PERIAPSIS > 70000.
-//LOCK THROTTLE TO 0. NOTIFY("Orbit achieved").
-
-//WAIT 5. NOTIFY("Shutting down").
-//SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0. SHUTDOWN.
+SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0. 
+printHUD("FINISHED").
+SHUTDOWN.
