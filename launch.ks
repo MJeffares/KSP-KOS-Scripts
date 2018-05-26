@@ -15,20 +15,25 @@ printHUD("LAUNCH").
 SET launchState TO 0.
 SET launchComplete To FALSE.
 SET MYSTEER TO HEADING(90,90).
+SET myThrottle To 1.0.
 LOCK STEERING TO MYSTEER.
-LOCK THROTTLE TO 1.0.
+LOCK THROTTLE TO myThrottle.
+LOCK grav TO (SHIP:BODY:MU / ( (SHIP:BODY:RADIUS + altitude) ^ 2)).
 STAGE.
 
 WHEN SHIP:AVAILABLETHRUST < (prevThrust -10) THEN
 {
-	LOCK THROTTLE TO 0.3.
+	SET myThrottle TO 0.3.
 	WAIT 0.3.
 	STAGE.
 	WAIT 1.
-	LOCK THROTTLE TO 1.
+	SET myThrottle TO 1.
 	SET prevThrust to SHIP:AVAILABLETHRUST.
 	PRESERVE.
 }
+
+
+
 
 UNTIL launchComplete
 {
@@ -44,7 +49,10 @@ UNTIL launchComplete
 	}
 	
 	IF launchState = 1
-	{		
+	{	
+		// limit TWR to 2.5
+		SET myThrottle TO (SHIP:MASS * grav) * 2.5  / SHIP:AVAILABLETHRUST. 
+	
 		IF speed > 1275 
 		{
 			SET MYSTEER TO HEADING(90,5).
@@ -56,7 +64,7 @@ UNTIL launchComplete
 		
 		IF APOAPSIS > 125000
 		{
-			LOCK THROTTLE TO 0.
+			SET myThrottle TO 0.
 			SET launchState TO 2.
 			printHUD("Coasting to apoapsis").
 		}
@@ -64,6 +72,7 @@ UNTIL launchComplete
 	
 	IF launchState = 2
 	{
+		SET myThrottle To 1.
 		LOCK MYSTEER TO SHIP:PROGRADE.
 		
 		IF ETA:APOAPSIS < 20
@@ -75,12 +84,12 @@ UNTIL launchComplete
 	
 	IF launchState = 3
 	{
-		LOCK THROTTLE TO 1.
+		SET myThrottle TO 0.
 		
 		IF PERIAPSIS > 125000
 		{
 			//launchState = 4.
-			LOCK THROTTLE TO 0.
+			SET myThrottle TO 0.
 			printHUD("Finished").
 			SET launchComplete TO true. 
 			SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0. 
