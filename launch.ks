@@ -1,113 +1,21 @@
-// launch.ks v2.0.0
+// launch.ks v3.0.0
 // Mansel Jeffares
 // KOS launch script
 
-//TODO:
-// limit max pitch/AOA based on pressure
-parameter turnSpeed is 30.
-parameter turnPitch is 10.
+// Needed for terminal drawing functions.
+runoncepath("1:/terminalUtilities.ks").
+
+InitialiseTerminal().
+
+parameter turnSpeed is 100. //down to 15 for extremly high thrust
+parameter turnPitch is 10.  //up to 25 for high thrust
+// parameter turnSpeed is 15.
+// parameter turnPitch is 25.
 parameter targetHeight is 125000.
-
-set terminal:width to 60.
-set terminal:height to 26.
-clearscreen.
-
-declare local function lngToDegrees 
-{
-	PARAMETER lng.
-	RETURN MOD(lng + 360, 360).
-}
-
-declare local function ORBITABLE 
-{
-	PARAMETER name.
-
-	LIST TARGETS in vessels.
-	FOR vs IN vessels 
-	{
-		if vs:NAME = name 
-		{
-			RETURN VESSEL(name).
-		}
-	}
-  
-  RETURN BODY(name).
-}
-
-declare local function getTargetAngle
-{
-	PARAMETER target.
-
-	RETURN MOD(lngToDegrees (ORBITABLE(target):LONGITUDE) - lngToDegrees (SHIP:LONGITUDE) + 360, 360).
-}
-
-declare local function PrintHud
-{
-	parameter message.
-	parameter delay is 5.
-	parameter size is 20.
-	parameter colour is WHITE.
-	//parameter echo is true.
-	parameter echo is false.
-	HudText(message, delay, 2, size, colour, echo).
-	LogToTerminal(message).
-}
+parameter dynamicPressureLimit is 30.
+parameter allowableOrbitError is 0.1. //% //not sure this is working atm
 
 
-global emptyString is "                                                            ".
-global terminalLog is list().
-
-function TerminalClearLine
-{
-	parameter l.
-	TerminalFillLine(l, " ").
-}
-
-function TerminalFillLine
-{
-	parameter line.
-	parameter character.
-
-	local s is emptyString.
-	set s to s:replace(" ", character).
-	print(s) at (0, line).
-}
-
-function LogToTerminal
-{
-	parameter s.
-
-	if terminalLog:length = 10
-	{
-		terminalLog:remove(0).
-	}
-
-	terminalLog:add(s).
-
-	DrawTerminalLog().
-}
-
-function DrawTerminalLog
-{
-	local lineStart is 15.
-	local counter is 1.
-
-	until counter = terminalLog:length
-	{
-		TerminalClearLine(lineStart + counter).
-		print terminalLog[terminalLog:length - counter] at (0, lineStart + counter).
-		set counter to counter + 1.
-	}
-}
-
-declare local function compareWithAllowance
-{
-	PARAMETER a.
-	PARAMETER b.
-	PARAMETER allowance.
-	
-	RETURN a - allowance < b AND a + allowance > b.
-}
 
 function AutoStage
 {
@@ -118,12 +26,14 @@ function AutoStage
 
 	if ship:AVAILABLETHRUST < (prevThrust - 10)
 	{
+        set mysteer to ship:facing.
+        wait 0.5.
+        LogToTerminal("STAGING").
 		wait until stage:ready.
 		stage.
 		wait 0.3.
-		set prevThrust to ship:AVAILABLETHRUST.
 	}
-
+    set prevThrust to ship:AVAILABLETHRUST.
 }
 
 function LaunchCountdown
@@ -141,15 +51,122 @@ function LaunchCountdown
 	PrintHud("Liftoff", 5).
 }
 
+function GetCurrentPressure
+{
+	return ship:body:atm:altitudepressure(ship:altitude) * Constant:AtmToKpa.
+}
 
-set thrustPID To PIDLOOP(1, 0, 0.5).
-set thrustPID:SETPOINT to 40.
-set thrustPID:minoutput to 0.05.
+function GetSeaLevelPressure
+{
+	return ship:body:atm:SeaLevelPressure * Constant:AtmToKpa.
+}
 
-set pitchPID to PIDLOOP(30, 0, 2).
-set pitchPID:MINOUTPUT to -3.
-set pitchPID:MAXOUTPUT to 5.
-set pitchPID:SETPOINT to 0.3.
+function GetDynamicPressure
+{
+	return ship:q * Constant:AtmToKpa.
+}
+
+function PitchOfVector
+{
+    parameter vect.
+
+    return 90 - vang(ship:up:vector, vect).
+}
+
+function YawOfVector
+{
+    parameter vect.
+
+    local trigX is vdot(ship:north:vector, vect).
+    local trigY is vdot(vcrs(ship:up:vector, ship:north:vector), vect).
+
+    local result is arctan2(trigY, trigX).
+
+    if result < 0
+    {
+        return 360 + result.
+    }
+    else
+    {
+        return result.
+    }
+}
+
+function VisVivaEquation
+{
+    parameter apoa.
+    parameter peri.
+    parameter rad.
+    parameter datum.
+    parameter gravConst.
+    parameter bodyMass.
+
+    return sqrt(gravConst * bodyMass * ((2 / rad) - (1 / (((apoa + peri) / 2) + datum)))).
+}
+
+function CalculateCircularisationBurn
+{
+    set speedAtApoapsis to VisVivaEquation(apoapsis, periapsis, (apoapsis + body:radius), body:radius, constant:G, body:mass).
+    set speedIfCircular to VisVivaEquation(apoapsis, targetHeight, (targetHeight + body:radius), body:radius, constant:G, body:mass).
+
+    set circularisationDeltaV to speedIfCircular - speedAtApoapsis.
+
+    set myNode to NODE(time:seconds + timeToApo, 0, 0, circularisationDeltaV).
+    return myNode.
+}
+
+function ExecuteNode
+{
+    parameter myNode.
+    parameter steer.
+    parameter throt.
+    
+    unlock steering.
+    unlock throttle.
+    set throttle to 0.
+
+    set steering to myNode:burnvector.
+    WAIT UNTIL VANG(myNode:burnvector, facing:vector) < 0.1.
+
+    //improve burn estimate using rocket equation
+    set crudeBurnEstimate to myNode:deltav:mag/(ship:maxthrust/ship:mass).
+
+    set kuniverse:TimeWarp:WARP to 4. 
+    wait until myNode:eta <= (crudeBurnEstimate / 2).
+    kuniverse:TimeWarp:CANCELWARP().
+    
+    set myNodeInitialVector to myNode:burnvector.
+    set burnComplete to false.
+
+    until burnComplete
+    {
+        set max_acc to ship:maxthrust/ship:mass.
+        set steering to myNode:burnvector.
+
+        if myNode:deltav:mag < 0.1
+        {
+            wait until vdot(myNodeInitialVector, myNode:burnvector) < 0.5.
+            set throttle to 0.
+            set launchComplete to true.
+        }
+
+        set throttle to min(myNode:deltav:mag/max_acc, 1).
+
+        if vdot(myNode:burnvector, myNodeInitialVector) < 0
+        {
+            set throttle to 0.
+
+            // return throttle and steering to what they were before function ran.
+            lock throttle to throt.
+            lock steering to steer.
+
+            set burnComplete to true.
+        }
+
+        wait 0.
+    }    
+}
+
 
 CLEARSCREEN.
 
@@ -163,11 +180,36 @@ lock grav to (SHIP:BODY:MU / ( (SHIP:BODY:RADIUS + altitude) ^ 2)).
 
 TerminalFillLine(14, "=").
 
+set angleOfAttackLimit to 30 - ((GetDynamicPressure / dynamicPressureLimit) * 25).
+
+set timeToApoPID to PIDLOOP(1, 0, 1).
+set timeToApoPID:setpoint to 0.
+
+set pitchPID to PIDLOOP(100, 0, 0.1).
+set pitchPID:setpoint to 0.3.
+set pitchPID:minoutput to -1.
+set pitchPID:maxoutput to angleOfAttackLimit.
+
+//set pressurePID to PIDLOOP(0.1, 0.0, 0.025).  //high thrust
+//set pressurePID to PIDLOOP(0.5, 0.0, 0.1).  //standard thrust
+set pressurePID to PIDLOOP(0.1, 0.0, 0.025).
+set pressurePID:setpoint to dynamicPressureLimit.
+set pressurePID:maxoutput to 1.
+set pressurePID:minoutput to 0.1.
+
+set nodePID to PIDLOOP(0.002, 0.0, 0.0001).
+set nodePID:setpoint to targetHeight.
+set nodePID:maxoutput to 1.
+set nodePID:minoutput to 0.
+
+lock timeToApo to ETA:APOAPSIS.
+
 until launchComplete
 {
 	AutoStage().
 	set speed to SHIP:VELOCITY:SURFACE:MAG.
 	
+    // Countdown/pre liftoff state
 	if launchState = 0
 	{
 		LaunchCountdown(5).
@@ -176,7 +218,8 @@ until launchComplete
 		PrintHud("Executing Vertical Ascent").
 	}
 
-	if launchState = 1
+    // Vertical Ascent State
+	else if launchState = 1
 	{
 		if speed > turnSpeed
 		{
@@ -184,112 +227,94 @@ until launchComplete
 		}
 	}
 	
-	if launchState = 2
+    // Intial turn/bump over
+	else if launchState = 2
 	{
 		set mySteer to HEADING(90, 90 - turnPitch).
 	 	PrintHud("Executing Pitch Maneuver").
-		WAIT UNTIL VANG(facing:vector,mySteer:vector)<0.5.
+		UNTIL VANG(facing:vector,mySteer:vector) < 0.5
+        {
+            pressurePID:update(time:seconds, GetDynamicPressure).
+	        set myThrottle to 1 * pressurePID:output.
+        }
 	 	PrintHud("Awaiting Velocity Vector Alignment").
-		WAIT UNTIL VANG(srfPrograde:vector,facing:vector)<1.
+		UNTIL VANG(srfPrograde:vector,facing:vector) < 1
+        {
+            pressurePID:update(time:seconds, GetDynamicPressure).
+	        set myThrottle to 1 * pressurePID:output.
+        }
 	 	PrintHud("Executing Gravity Turn").
 		lock mySteer to srfPrograde.
 		set launchState to 3.
 	}
 	
-	if launchState = 3
+    // Intial flight
+	else if launchState = 3
 	{	
-		// limit TWR to 2.5
-		//set myThrottle to (SHIP:MASS * grav) * 2.5  / SHIP:AVAILABLETHRUST. 
-		lock timeToApo to ETA:APOAPSIS.
-		//lock mult to ((2 - ((120000 - APOAPSIS) / 120000)) ^ 2).
-		lock mult to ((2 - ((SHIP:BODY:ATM:height - alt:radar) / SHIP:BODY:ATM:height)) ^ 2).
-		
-		//set mult to 1.
+        timeToApoPID:update(time:seconds, -timeToApo).
+		pitchPID:update(time:seconds, timeToApoPID:dterm).
 
-		set thrustPID:SETPOINT to (40 * mult).
-		
-		thrustPID:UPDATE(TIME:SECONDS, timeToApo).
-		pitchPID:UPDATE(TIME:SECONDS, -thrustPID:DTERM).
-		
-		set myThrottle to thrustPID:OUTPUT.
+		pressurePID:update(time:seconds, GetDynamicPressure).
+		set myThrottle to 1 * pressurePID:output.
 
-		if thrustPID:ERROR > 2.0
-		{
-			//set thrustPID:MAXOUTPUT to (SHIP:MASS * grav) * 4.0  / SHIP:AVAILABLETHRUST. 
-			set mySteer to srfPrograde + R(0, pitchPID:OUTPUT, 0).
-			set thrustPID:kp to 1.
-			set thrustPID:ki to 0.0.
-			set thrustPID:kd to 0.5.
-		}
-		else
-		{
-			//set thrustPID:MAXOUTPUT to (SHIP:MASS * grav) * 2.0  / SHIP:AVAILABLETHRUST. 
-			set mySteer to srfPrograde.
-			set thrustPID:kp to 0.25.
-			set thrustPID:ki to 0.1.
-			set thrustPID:kd to 0.1.
-		}
+        // if at less than 5% seaLevelPressure
+        if GetCurrentPressure < GetSeaLevelPressure / 20
+        {
+            PrintHud("Less than 5% atmosphere switching to orbital guidance").
+            set navmode to "orbit".
+            set angleOfAttackLimit to 90 - PitchOfVector(Prograde:vector).
+            set pitchPID:maxoutput to angleOfAttackLimit.
+            set mysteer to heading(90, PitchOfVector(Prograde:vector) + pitchPID:output).
+        }
+        else
+        {
+            set angleOfAttackLimit to 30 - ((GetDynamicPressure / dynamicPressureLimit) * 25).
+            set pitchPID:maxoutput to angleOfAttackLimit.
+            set mysteer to heading(90, PitchOfVector(srfPrograde:vector) + pitchPID:output).
+        }
 
-		if APOAPSIS > 120000
+		// within 5% of our target height
+		if targetHeight - apoapsis < (targetHeight / 20)
 		{
-			set myThrottle to 0.1.
-			if APOAPSIS > 125000
-			{
-				set myThrottle to 0.
-				set launchState to 4.
-			 	PrintHud("Coasting to apoapsis").
-			}
+            PrintHud("Fine tuning apoapsis").
+            // set myThrottle to 0.
+            // set mySteer to SHIP:PROGRADE.
+		    // WAIT UNTIL VANG(Prograde:vector,facing:vector) < 0.1.
+            set launchState to 4.
 		}
 
-		print("Target Time: " + round(thrustPID:setpoint,4)) at (0,0).
-		print("Current Time: " + round(timeToApo,4)) at (30,0).
-		print("MAIN PID") at (0,1).
-		print("ERROR: " + round(thrustPID:ERROR,4)) at (0,2).
-		PRINT("P-TERM: " + round(thrustPID:PTERM,4)) at (0,3).
-		PRINT("I-TERM: " + round(thrustPID:ITERM,4)) at (0,4).
-		PRINT("D-TERM: " + round(thrustPID:DTERM,4)) at (0,5).
-		PRINT("OUTPUT: " + round(thrustPID:OUTPUT,4)) at (0,6).
-		print("PITCH PID") at (30,1).
-		print("ERROR: " + round(pitchPID:ERROR,4)) at (30,2).
-		PRINT("P-TERM: " + round(pitchPID:PTERM,4)) at (30,3).
-		PRINT("I-TERM: " + round(pitchPID:ITERM,4)) at (30,4).
-		PRINT("D-TERM: " + round(pitchPID:DTERM,4)) at (30,5).
-		PRINT("OUTPUT: " + round(pitchPID:OUTPUT,4)) at (30,6).	
+        LogPidToTerminal("MAIN PID", timeToApoPID, 1, 0).
+        LogPidToTerminal("PRESSURE PID", pressurePID, 1, 20).
+        LogPidToTerminal("PITCH PID", pitchPID, 1, 40).
+
+        LOG TIME:SECONDS + "," +  round(GetCurrentPressure, 4) + "," + round(ship:q * Constant:AtmToKpa, 4) TO "0:/myfile.csv".
 	}
 	
-	if launchState = 4
+    // Fine tuning apoapsis
+	else if launchState = 4
 	{
-		set myThrottle To 0.
-		lock mySteer to SHIP:PROGRADE.
-		WAIT UNTIL VANG(Prograde:vector,facing:vector)<0.1.
-		set kuniverse:TimeWarp:WARP to 4. 
-		
-		if ETA:APOAPSIS < 20
-		{
-			kuniverse:TimeWarp:CANCELWARP().
-			WAIT 10.
-			set launchState to 5.
-		 PrintHud("Circularizing").
-		}		
+        if (abs(((apoapsis / targetheight)* 100) - 100)) < allowableOrbitError and altitude > 70000
+        {
+            PrintHud("Executing Circularisation Burn").
+            set myThrottle to 0.
+            set circularisationBurn to CalculateCircularisationBurn.
+            add circularisationBurn.
+
+            set launchState to 5.
+        }
+        else
+        {
+            nodePID:update(time:seconds, apoapsis).
+            set myThrottle to nodePID:output.
+        }	
 	}
 	
-	if launchState = 5
+    // Circularisation burn
+	else if launchState = 5
 	{
-		set myThrottle to 1.
-				
-		if PERIAPSIS > 120000
-		{
-			set myThrottle to 0.1.
-			if PERIAPSIS > 125000
-			{
-				//launchState = 5.
-				set myThrottle to 0.
-			 	PrintHud("Finished").
-				set launchComplete to true. 
-				//set SHIP:CONTROL:PILOTMAINTHROTTLE to 0. 
-				//SHUTDOWN.
-			}
-		}
+        ExecuteNode(circularisationBurn, mysteer, myThrottle).
+        PrintHud("Circularisation Burn Finished").
+        set launchComplete to true.	
 	}
 	
 	if SHIP:LIQUIDFUEL < 0.10
@@ -298,12 +323,14 @@ until launchComplete
 	 	PrintHud("OUTTA FUEL").
 		SHUTDOWN.
 	}
+
+    //wait until the next tick before we run
+    wait 0.
 	
-	WAIT 0.07.
 }
 
-
-
+PrintHud("Launch Script Finished").
+unlock throttle.
+unlock steering.
 set SHIP:CONTROL:PILOTMAINTHROTTLE to 0.  
-PrintHud("FINISHED").
 SHUTDOWN.
